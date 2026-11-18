@@ -1,0 +1,1003 @@
+const keyedProviders = [
+  "openrouter",
+  "lovable",
+  "gemini",
+  "openai",
+  "elevenlabs",
+  "deepgram",
+] as const;
+const ttsProviders = [
+  "auto",
+  "google",
+  "lovable",
+  "openrouter",
+  "gemini",
+  "openai",
+  "elevenlabs",
+  "deepgram",
+] as const;
+const audioProviders = [
+  "google",
+  "lovable",
+  "openrouter",
+  "gemini",
+  "openai",
+  "elevenlabs",
+  "deepgram",
+] as const;
+
+const params = {
+  text: {
+    type: "string",
+    minLength: 1,
+    maxLength: 5000,
+    description: "Text to speak (trimmed; 1–5000 characters)",
+  },
+  lang: {
+    type: "string",
+    minLength: 2,
+    maxLength: 20,
+    description:
+      "Source language as a YouTube-supported language code or BCP-47 tag (for example en, zh-Hant, es-419, or pt-BR). Language codes are passed through to the selected provider.",
+    example: "en",
+  },
+  target_lang: {
+    type: "string",
+    maxLength: 20,
+    description:
+      "Optional YouTube-supported language code or BCP-47 tag. If set, text is translated before speaking.",
+    example: "fr-CA",
+  },
+  provider: {
+    type: "string",
+    enum: ttsProviders,
+    default: "google",
+    description:
+      "Auto randomly selects a configured provider key without recent auth/quota failures. Providers are Google, Lovable, OpenRouter, Gemini, OpenAI, ElevenLabs, and Deepgram.",
+  },
+  api_key: {
+    type: "string",
+    maxLength: 500,
+    description:
+      "API key for the selected keyed provider. This per-request key takes precedence over saved and server-configured keys and is not stored. Omit to use configured keys. Requires an explicit keyed provider (not auto or google). Personal API tokens must omit this field and use account-owned keys. Prefer POST or the X-Provider-API-Key header to avoid URL logging.",
+  },
+  providers: {
+    type: "array",
+    minItems: 1,
+    maxItems: 7,
+    uniqueItems: true,
+    items: { type: "string", enum: audioProviders },
+    description: "Optional ordered fallback list. Overrides provider; tries only these services in the supplied order until one succeeds. Google needs no authentication. Cannot combine with api_key or X-Provider-API-Key. GET accepts JSON or comma-separated names.",
+    example: ["gemini", "openai", "google"],
+  },
+  exclude: {
+    type: "array",
+    minItems: 1,
+    maxItems: 7,
+    uniqueItems: true,
+    items: { type: "string", enum: audioProviders },
+    description: "Optional blacklist. Removes these providers from `providers` (or from all providers when `providers` is omitted); the rest are tried in order. GET accepts JSON or comma-separated names.",
+    example: ["openrouter"],
+  },
+  provider_options: {
+    type: "object",
+    additionalProperties: false,
+    properties: Object.fromEntries(audioProviders.map((p) => [p, { type: "object", additionalProperties: true }])),
+    description: "Settings by provider, overriding common options for that service. Also applies to Auto. GET accepts URL-encoded JSON.",
+    example: { gemini: { model: "gemini-2.5-flash-preview-tts" }, openai: { instructions: "Speak calmly." } },
+  },
+  debug: {
+    oneOf: [{ type: "boolean" }, { type: "string", enum: ["true", "false", "1", "0", "on", "off"] }],
+    default: false,
+    description: "true, 1, or on returns JSON even with format=binary: actual provider, timing, cache status, audio bytes, language, usage when available, and redacted server_log. POST also accepts ?debug=on (overrides body). Never returns provider keys.",
+  },
+  voice: {
+    type: "string",
+    maxLength: 100,
+    description:
+      "Provider-specific voice. Gemini/Lovable: prebuilt voice name (default Kore; e.g. Puck, Charon, Fenrir, Aoede). OpenAI: voice name (default coral; alloy, ash, ballad, echo, fable, nova, onyx, sage, shimmer, verse). ElevenLabs: voice ID (default JBFqnCBsd6RMkjVDRZzb). Deepgram: Aura model ID (aura-…); defaults by lang. OpenRouter (Fish Audio models): a 32-char hex voice ID, `female`/`male`, or a voice name such as `Laura` or any public fish.audio voice title (looked up in the Fish Audio library, best match for lang first; 400 if none is found); defaults to a female voice matching lang. With provider=auto the voice is only forwarded to the provider it belongs to (detected by format/name); other providers use their default. Prefer `voices` for auto.",
+    example: "Kore",
+  },
+  voices: {
+    type: "object",
+    description:
+      "Per-provider voice map, e.g. {\"gemini\":\"Kore\",\"openai\":\"coral\",\"openrouter\":\"Laura\"}. Takes precedence over `voice` for the provider that serves the request — ideal with provider=auto. For GET, pass as URL-encoded JSON.",
+    additionalProperties: false,
+    properties: Object.fromEntries(
+      keyedProviders.map((p) => [p, { type: "string", maxLength: 100 }]),
+    ),
+    example: { gemini: "Kore", lovable: "Kore", openai: "coral", deepgram: "aura-2-thalia-en" },
+  },
+  speed: {
+    type: "number",
+    minimum: 0.25,
+    maximum: 4,
+    deprecated: true,
+    description:
+      "Deprecated and ignored. Accepted so older callers keep working, but it is never sent to any provider: audio is always generated at normal speed. Change speed during playback instead (e.g. HTMLMediaElement.playbackRate with preservesPitch), as the web playground does.",
+  },
+  options: {
+    type: "object",
+    additionalProperties: true,
+    properties: {
+      model: {
+        type: "string",
+        description:
+          "Provider-specific model override. OpenRouter defaults to Fish Audio S2.1 Pro Free; OpenAI to gpt-4o-mini-tts; Gemini to gemini-2.5-flash-preview-tts; ElevenLabs to eleven_multilingual_v2; Deepgram to an Aura-2 voice selected by language.",
+      },
+      instructions: { type: "string", description: "Optional OpenAI speech style instructions." },
+      voice_id: { type: "string", description: "Optional ElevenLabs voice ID override." },
+      encoding: {
+        type: "string",
+        description: "Deepgram output encoding (for example mp3, linear16, or opus).",
+      },
+      container: {
+        type: "string",
+        description: "Deepgram output container (for example wav or ogg).",
+      },
+      sample_rate: {
+        type: "integer",
+        description: "Deepgram output sample rate, where supported by the encoding.",
+      },
+      bit_rate: {
+        type: "integer",
+        description: "Deepgram output bit rate, where supported by the encoding.",
+      },
+      mip_opt_out: {
+        type: "boolean",
+        description: "Deepgram Model Improvement Program opt-out setting.",
+      },
+    },
+    description: "Provider-specific settings. For GET requests, pass as a URL-encoded JSON string.",
+  },
+  format: { type: "string", enum: ["binary", "json"], default: "binary", description: "binary = raw audio file, json = base64 audio" },
+} as const;
+
+const validationResponse = {
+  description: "Validation results per provider (no audio returned).",
+  content: {
+    "application/json": {
+      schema: {
+        type: "object",
+        properties: {
+          checked: { type: "array", items: { type: "string", enum: audioProviders } },
+          working: { type: "array", items: { type: "string", enum: audioProviders } },
+          failed: { type: "array", items: { type: "string", enum: audioProviders } },
+          results: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                provider: { type: "string" }, ok: { type: "boolean" }, response_time_ms: { type: "number" },
+                audio_bytes: { type: "number" }, mime: { type: "string" }, status: { type: "number" }, error: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+      example: { checked: ["google", "gemini"], working: ["google"], failed: ["gemini"], results: [{ provider: "google", ok: true, response_time_ms: 420, audio_bytes: 5120, mime: "audio/mpeg" }, { provider: "gemini", ok: false, response_time_ms: 90, status: 400, error: "No Gemini key configured" }] },
+    },
+  },
+} as const;
+
+function providerListPaths(kind: "validate" | "auto") {
+  const isAuto = kind === "auto";
+  const desc = isAuto
+    ? "Same as /api/public/tts with provider=auto, restricted by `providers` (whitelist, ordered fallback) and/or `exclude` (blacklist). With debug=true it only validates the resulting list and returns the /validate result instead of audio. Typical flow: call /validate, then pass its `working` array as `providers` here."
+    : "Checks every provider (or the `providers` whitelist minus `exclude`) in parallel with a real short synthesis using your account/configured keys. text defaults to \"Test\" and lang to \"en\". Pass the `working` array to /api/public/auto as `providers`.";
+  const responses = {
+    "200": isAuto ? audioSuccessResponse : validationResponse,
+    "400": { description: "Invalid input, or exclude removed every provider" },
+    "401": { description: "Invalid personal API token" },
+    ...(isAuto ? { "502": { description: "Every allowed provider failed" } } : {}),
+  };
+  const props = Object.fromEntries(Object.entries(params).filter(([n]) => n !== "provider" && n !== "api_key" && (isAuto || n !== "format")));
+  return {
+    get: {
+      operationId: isAuto ? "autoSpeechFromQuery" : "validateProvidersFromQuery",
+      summary: isAuto ? "Auto speech with provider whitelist/blacklist (query)" : "Validate providers (query)",
+      description: desc,
+      security: [{ personalApiTokenAuth: [] }, { supabaseSessionAuth: [] }, {}],
+      parameters: Object.entries(props).map(([name, schema]) => ({
+        name,
+        in: "query",
+        required: isAuto && (name === "text" || name === "lang"),
+        schema: ["options", "voices", "provider_options", "providers", "exclude"].includes(name)
+          ? { type: "string", maxLength: 2000, description: name === "providers" || name === "exclude" ? "JSON array or comma-separated names, e.g. google,gemini" : `URL-encoded JSON object (${name}).` }
+          : schema,
+      })),
+      responses,
+    },
+    post: {
+      operationId: isAuto ? "autoSpeech" : "validateProviders",
+      summary: isAuto ? "Auto speech with provider whitelist/blacklist (JSON body)" : "Validate providers (JSON body)",
+      description: desc,
+      security: [{ personalApiTokenAuth: [] }, { supabaseSessionAuth: [] }, {}],
+      requestBody: {
+        required: isAuto,
+        content: {
+          "application/json": {
+            schema: { type: "object", ...(isAuto ? { required: ["text", "lang"] } : {}), properties: props },
+            example: isAuto ? { text: "Hello", lang: "en", providers: ["gemini", "google"], exclude: ["openrouter"], debug: false } : { providers: ["google", "gemini", "openai"] },
+          },
+        },
+      },
+      responses,
+    },
+  };
+}
+
+const audioSuccessResponse = {
+  description: "Encoded audio, or JSON when format=json or debug is enabled. Auto selects a keyed provider; an explicit providers list tries only its ordered choices, including anonymous Google when specified.",
+  headers: {
+    "X-Response-Time-Ms": {
+      schema: { type: "integer" },
+      description: "Server-side request duration in milliseconds.",
+    },
+    "X-Provider": {
+      schema: {
+        type: "string",
+        enum: audioProviders,
+      },
+      description: "Provider that generated the audio, including the provider selected by Auto.",
+    },
+    "X-Provider-Input-Tokens": {
+      schema: { type: "integer" },
+      description: "Provider-reported input token count, when available.",
+    },
+    "X-Provider-Output-Tokens": {
+      schema: { type: "integer" },
+      description: "Provider-reported output token count, when available.",
+    },
+  },
+  content: {
+    "audio/mpeg": { schema: { type: "string", format: "binary" } },
+    "audio/wav": { schema: { type: "string", format: "binary" } },
+    "audio/*": { schema: { type: "string", format: "binary" } },
+    "application/json": {
+      schema: {
+        type: "object",
+        properties: {
+          audio: { type: "string", contentEncoding: "base64" },
+          mime: { type: "string" },
+          text: { type: "string" },
+          lang: { type: "string" },
+          provider: { type: "string" },
+          debug: { type: "object", properties: {
+            requested_provider: { type: "string" },
+            requested_providers: { type: "array", items: { type: "string" } },
+            provider: { type: "string", enum: audioProviders },
+            response_time_ms: { type: "integer" },
+            cached: { type: "boolean" },
+            audio_bytes: { type: "integer" },
+            mime: { type: "string" },
+            lang: { type: "string" },
+            usage: { type: "object", additionalProperties: true },
+          } },
+          server_log: { type: "object", description: "Debug-only received request and outgoing provider HTTP calls, with credentials redacted.", additionalProperties: true },
+          usage: {
+            type: "object",
+            properties: { inputTokens: { type: "integer" }, outputTokens: { type: "integer" } },
+          },
+        },
+      },
+    },
+  },
+};
+
+const usageMetricsSchema = {
+  type: "object",
+  properties: {
+    requests: { type: "integer" },
+    successful: { type: "integer" },
+    failed: { type: "integer" },
+    cached: { type: "integer" },
+    audio_bytes: { type: "integer" },
+    input_chars: { type: "integer" },
+    output_chars: { type: "integer" },
+    estimated_input_tokens: { type: "integer" },
+    provider_input_tokens: { type: "integer", description: "Provider-reported total; zero when unavailable." },
+    provider_output_tokens: { type: "integer", description: "Provider-reported total; zero when unavailable." },
+    avg_duration_ms: { type: "integer" },
+  },
+};
+
+const usageReportSchema = {
+  type: "object",
+  properties: {
+    window_hours: { type: "integer" },
+    totals: usageMetricsSchema,
+    services: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { service: { type: "string" }, ...usageMetricsSchema.properties },
+      },
+    },
+  },
+};
+
+export const openApiSpec = {
+  openapi: "3.1.0",
+  info: { title: "Speak API", version: "1.2.0", description: "Text-to-speech with optional translation. CORS enabled." },
+  // Relative to wherever this document is served; /api/public/openapi.json replaces it with the request origin.
+  servers: [{ url: "/", description: "This Speak API deployment" }],
+  paths: {
+    "/api/public/tts": {
+      get: {
+        operationId: "synthesizeSpeechFromQuery",
+        summary: "Synthesize speech (query params)",
+        description: "Google works anonymously: omit Authorization. Every other provider needs a signed-in session or personal API token (to use the account's saved keys) or an inline api_key. Invalid supplied tokens are rejected. Customize provider, providers, voices, options and provider_options. Voice names are provider-specific; use `voices` to set one per provider.",
+        security: [{ personalApiTokenAuth: [] }, { supabaseSessionAuth: [] }, {}],
+        parameters: [
+          ...Object.entries(params).map(([name, schema]) => ({
+            name,
+            in: "query",
+            required: name === "text" || name === "lang",
+            schema:
+              name === "options" || name === "voices" || name === "provider_options" || name === "providers" || name === "exclude"
+                ? {
+                    type: "string",
+                    maxLength: 2000,
+                    description: name === "providers" || name === "exclude" ? "Provider list as JSON or comma-separated names." : `URL-encoded JSON object (${name}).`,
+                  }
+                : schema,
+          })),
+          {
+            name: "X-Provider-API-Key",
+            in: "header",
+            required: false,
+            description:
+              "Per-request provider key; overrides saved and server-configured keys. Use with a specific keyed provider, not Auto or Google. Header takes precedence over api_key.",
+            schema: { type: "string", maxLength: 500 },
+          },
+        ],
+        responses: {
+          "200": audioSuccessResponse,
+          "400": {
+            description: "Invalid input or no configured provider key is available",
+            content: {
+              "application/json": { schema: { type: "object", properties: { error: {} } } },
+            },
+          },
+          "502": {
+            description:
+              "Provider request failed after key attempts. The error explains whether the provider rejected the key, reported a quota/billing issue, rejected request settings, or had a temporary outage; a 5xx response does not by itself mean the key is invalid.",
+          },
+          "503": { description: "Provider key storage or routing is unavailable" },
+        },
+      },
+      post: {
+        operationId: "synthesizeSpeech",
+        summary: "Synthesize speech (JSON body)",
+        description: "Google works anonymously: omit Authorization. Every other provider needs a signed-in session or personal API token (to use the account's saved keys) or an inline api_key / X-Provider-API-Key. Customize provider, providers, voices, options and provider_options. Voice names are provider-specific; use `voices` to set one per provider. Invalid supplied tokens are rejected rather than silently ignored.",
+        security: [{ personalApiTokenAuth: [] }, { supabaseSessionAuth: [] }, {}],
+        parameters: [
+          {
+            name: "X-Provider-API-Key",
+            in: "header",
+            required: false,
+            description:
+              "Per-request provider key; overrides saved and server-configured keys. Use with a specific keyed provider, not Auto or Google. Header takes precedence over api_key.",
+            schema: { type: "string", maxLength: 500 },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { type: "object", required: ["text", "lang"], properties: params } } },
+        },
+        responses: {
+          "200": audioSuccessResponse,
+          "400": { description: "Invalid input or no configured provider key is available" },
+          "502": {
+            description:
+              "Provider request failed after key attempts. The error explains whether the provider rejected the key, reported a quota/billing issue, rejected request settings, or had a temporary outage; a 5xx response does not by itself mean the key is invalid.",
+          },
+          "503": { description: "Provider key storage or routing is unavailable" },
+        },
+      },
+    },
+    "/api/public/validate": providerListPaths("validate"),
+    "/api/public/auto": providerListPaths("auto"),
+    "/api/public/openapi.json": {
+      get: {
+        operationId: "getOpenApiDocument",
+        summary: "Get the canonical OpenAPI document",
+        security: [],
+        responses: {
+          "200": {
+            description: "Current Speak API contract in OpenAPI 3.1 JSON format.",
+            headers: {
+              "Access-Control-Allow-Origin": {
+                schema: { type: "string", const: "*" },
+                description: "Allows browser clients to fetch the public API contract.",
+              },
+            },
+            content: {
+              "application/json": {
+                schema: { type: "object", description: "The canonical OpenAPI 3.1 document." },
+              },
+            },
+          },
+          "500": { description: "Could not generate the OpenAPI document" },
+        },
+      },
+    },
+    "/api/public/info": {
+      get: {
+        operationId: "getPublicServiceInfo",
+        summary: "Get API capabilities and provider availability",
+        description:
+          "Returns non-secret service status, provider availability, persistence mode, and features that require Supabase.",
+        security: [],
+        responses: {
+          "200": {
+            description: "Public API capabilities and configuration status.",
+            content: { "application/json": { schema: { type: "object" } } },
+          },
+        },
+      },
+    },
+    "/api/public/access-token": {
+      post: {
+        operationId: "createTemporaryAccessToken",
+        summary: "Create a temporary access token without an account",
+        description:
+          "Provide your own provider keys to receive an opaque bearer token. Keys stay in server memory, are never returned, and are lost when the process restarts. Tokens expire after 24 hours.",
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["provider_keys"],
+                properties: {
+                  provider_keys: {
+                    type: "object",
+                    minProperties: 1,
+                    additionalProperties: {
+                      type: "array",
+                      minItems: 1,
+                      maxItems: 10,
+                      items: { type: "string", minLength: 1, maxLength: 500 },
+                    },
+                    description:
+                      "Map keyed provider names to arrays of API keys. At most 50 keys total.",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Temporary bearer token, returned once. Store it securely.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["token", "expires_at", "providers"],
+                  properties: {
+                    token: { type: "string" },
+                    token_type: { type: "string", const: "Bearer" },
+                    expires_at: { type: "string", format: "date-time" },
+                    expires_in: { type: "integer", const: 86400 },
+                    providers: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          service: { type: "string", enum: keyedProviders },
+                          key_count: { type: "integer" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Provider key list is missing or invalid" },
+          "413": { description: "Request body is too large" },
+          "429": { description: "In-memory token capacity has been reached" },
+        },
+      },
+      delete: {
+        operationId: "revokeTemporaryAccessToken",
+        summary: "Revoke the current temporary access token",
+        security: [{ personalApiTokenAuth: [] }],
+        responses: {
+          "200": { description: "Temporary token revoked" },
+          "401": { description: "Missing, invalid, or expired temporary token" },
+        },
+      },
+    },
+    "/api/public/openrouter-keys": {
+      get: {
+        operationId: "listSharedProviderKeys",
+        summary: "List shared provider key metadata",
+        description:
+          "Requires a management bearer token or configured server provider key. Secrets, ciphertext, and fingerprints are never returned.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "service",
+            in: "query",
+            required: false,
+            schema: {
+              type: "string",
+              enum: keyedProviders,
+              default: "openrouter",
+            },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Shared provider keys and their health state.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    service: { type: "string" },
+                    keys: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string", format: "uuid" },
+                          service: { type: "string" },
+                          key: { type: "string", const: "Configured key" },
+                          source: { type: "string" },
+                          status: { type: "string" },
+                          code: { type: ["integer", "null"] },
+                          failures: { type: "integer" },
+                          lastUsed: { type: "integer" },
+                          quarantinedUntil: { type: "integer" },
+                        },
+                      },
+                    },
+                    quarantine_after: { type: "integer" },
+                    quarantine_minutes: { type: "integer" },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Unsupported provider service" },
+          "401": { description: "Management authorization required" },
+          "503": { description: "Saved provider key management requires Supabase" },
+        },
+      },
+      post: {
+        operationId: "updateSharedProviderKeys",
+        summary: "Add a shared provider key or reset its health",
+        description:
+          "Requires a management bearer token or configured server provider key. A key is encrypted before storage; use `reset` with a key row ID to reset its health instead.",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                anyOf: [{ required: ["key"] }, { required: ["reset"] }],
+                properties: {
+                  service: {
+                    type: "string",
+                    enum: keyedProviders,
+                  },
+                  key: { type: "string", maxLength: 500 },
+                  reset: {
+                    type: "string",
+                    format: "uuid",
+                    description: "Shared key row ID whose failure state should be reset.",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": { description: "Updated key list and health state" },
+          "400": { description: "Unsupported service or invalid/missing key" },
+          "401": { description: "Management authorization required" },
+          "404": { description: "Key to reset was not found" },
+          "409": { description: "Key already exists" },
+          "503": { description: "Saved provider key management requires Supabase" },
+        },
+      },
+      delete: {
+        operationId: "deleteSharedProviderKey",
+        summary: "Delete a saved shared provider key",
+        description:
+          "Requires a management bearer token or configured server provider key. Keys managed through environment variables cannot be deleted here.",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "query",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+          {
+            name: "service",
+            in: "query",
+            required: false,
+            schema: {
+              type: "string",
+              enum: keyedProviders,
+              default: "openrouter",
+            },
+          },
+        ],
+        responses: {
+          "200": { description: "Updated key list and health state" },
+          "400": { description: "Key not found or managed in server secrets" },
+          "401": { description: "Management authorization required" },
+          "503": { description: "Saved provider key management requires Supabase" },
+        },
+      },
+    },
+    "/api/public/usage": {
+      get: {
+        operationId: "getProviderUsageReportLegacy",
+        summary: "Get provider usage statistics",
+        description:
+          "Legacy alias of /api/report/usage. Returns JSON aggregates by actual provider. Temporary tokens receive their own process-memory usage; personal API tokens and Supabase sessions receive their own persisted usage; management credentials receive global usage.",
+        security: [{ personalApiTokenAuth: [] }, { supabaseSessionAuth: [] }, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: "hours",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 720, default: 24 },
+          },
+        ],
+        responses: {
+          "200": {
+            description:
+              "Request, audio, character, estimated-token, reported-token, and latency totals grouped by actual provider.",
+            content: { "application/json": { schema: usageReportSchema } },
+          },
+          "401": { description: "Management authorization required" },
+          "503": { description: "Usage report unavailable" },
+        },
+      },
+    },
+    "/api/report/usage": {
+      get: {
+        operationId: "getProviderUsageReport",
+        summary: "Get provider usage report",
+        description:
+          "Returns usage aggregates grouped by the actual provider. Temporary tokens receive their own process-memory usage; personal API tokens and Supabase sessions receive their own persisted usage; management credentials receive global usage. Playable audio history is stored in the user's browser and is not included.",
+        security: [{ personalApiTokenAuth: [] }, { supabaseSessionAuth: [] }, { bearerAuth: [] }],
+        parameters: [
+          {
+            name: "hours",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 720, default: 24 },
+          },
+        ],
+        responses: {
+          "200": { description: "Request, audio, character, estimated-token, reported-token, and latency totals grouped by actual provider.", content: { "application/json": { schema: usageReportSchema } } },
+          "401": { description: "Management authorization required" },
+          "503": { description: "Usage report unavailable" },
+        },
+      },
+    },
+    "/api/user/token": {
+      get: {
+        operationId: "listPersonalApiTokens",
+        summary: "List personal API tokens",
+        security: [{ supabaseSessionAuth: [] }],
+        responses: {
+          "200": { description: "Token metadata only; token secrets are never returned by this operation.", content: { "application/json": { schema: { type: "object", properties: { tokens: { type: "array", items: { type: "object", properties: { id: { type: "string", format: "uuid" }, label: { type: "string" }, created_at: { type: "string", format: "date-time" }, last_used: { type: ["string", "null"], format: "date-time" }, revoked_at: { type: ["string", "null"], format: "date-time" } } } } } } } } },
+          "401": { description: "Valid Supabase session required" },
+        },
+      },
+      post: {
+        operationId: "createPersonalApiToken",
+        summary: "Create a personal API token",
+        description: "Requires a Supabase session. The personal token secret is returned once and cannot be retrieved later; only its hash is stored.",
+        security: [{ supabaseSessionAuth: [] }],
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: { label: { type: "string", maxLength: 80, default: "External agent" } },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "New token. Store the token value securely; it is shown only once.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["id", "token"],
+                  properties: {
+                    id: { type: "string", format: "uuid" },
+                    token: { type: "string", description: "Personal bearer secret; shown once." },
+                  },
+                },
+              },
+            },
+          },
+          "401": { description: "Valid Supabase session required" },
+        },
+      },
+      delete: {
+        operationId: "revokePersonalApiToken",
+        summary: "Revoke a personal API token",
+        security: [{ supabaseSessionAuth: [] }],
+        parameters: [
+          { name: "id", in: "query", required: true, schema: { type: "string", format: "uuid" } },
+        ],
+        responses: {
+          "200": { description: "Token revoked" },
+          "404": { description: "Token not found for this user" },
+          "401": { description: "Valid Supabase session required" },
+        },
+      },
+    },
+    "/api/user/provider-keys": {
+      get: {
+        operationId: "listPersonalProviderKeys",
+        summary: "List personal provider keys",
+        security: [{ supabaseSessionAuth: [] }],
+        responses: {
+          "200": {
+            description:
+              "Owner-scoped key metadata. Provider secrets and ciphertext are never returned.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    services: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: keyedProviders,
+                      },
+                    },
+                    keys: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string", format: "uuid" },
+                          service: { type: "string" },
+                          key_suffix: {
+                            type: "string",
+                            description:
+                              "Last four characters of the saved key; the secret is never returned.",
+                          },
+                          status: { type: "string" },
+                          failures: { type: "integer" },
+                          code: { type: ["integer", "null"] },
+                          created_at: { type: "string", format: "date-time" },
+                          last_used: { type: ["string", "null"], format: "date-time" },
+                        },
+                      },
+                    },
+                    history: {
+                      type: "array",
+                      description:
+                        "Up to 200 recent provider key request and test outcomes. Events are recorded from the migration onward; provider response bodies and credentials are never stored.",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "integer" },
+                          key_id: { type: "string", format: "uuid" },
+                          occurred_at: { type: "string", format: "date-time" },
+                          action: { type: "string", enum: ["request", "test"] },
+                          response_code: { type: "integer" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "401": { description: "Valid Supabase session required" },
+        },
+      },
+      post: {
+        operationId: "savePersonalProviderKey",
+        summary: "Save a personal provider key",
+        security: [{ supabaseSessionAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                anyOf: [{ required: ["service", "key"] }, { required: ["test", "id"] }],
+                properties: {
+                  service: {
+                    type: "string",
+                    enum: keyedProviders,
+                  },
+                  key: { type: "string", maxLength: 500 },
+                  test: {
+                    type: "boolean",
+                    const: true,
+                    description:
+                      "Test a saved provider key with a provider-specific non-billing authentication endpoint. OpenRouter may also return safe account/token status.",
+                  },
+                  id: { type: "string", format: "uuid" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Provider key test result and, for OpenRouter, safe token/account status.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    test: {
+                      type: "object",
+                      properties: {
+                        valid: { type: "boolean" },
+                        service: { type: "string", enum: keyedProviders },
+                        status: { type: "string" },
+                        http_status: { type: "integer" },
+                        account: { type: "object" },
+                        message: { type: "string" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "201": { description: "Provider key saved and encrypted" },
+          "409": { description: "Key already saved for this account" },
+          "401": { description: "Valid Supabase session required" },
+        },
+      },
+      delete: {
+        operationId: "removePersonalProviderKey",
+        summary: "Remove a personal provider key",
+        security: [{ supabaseSessionAuth: [] }],
+        parameters: [{ name: "id", in: "query", required: true, schema: { type: "string", format: "uuid" } }],
+        responses: { "200": { description: "Provider key removed" }, "404": { description: "Key not found for this user" }, "401": { description: "Valid Supabase session required" } },
+      },
+    },
+    "/api/user/data": {
+      get: {
+        operationId: "exportAccountData",
+        summary: "Export account data",
+        description: "Requires a signed-in session. Returns the account's saved provider keys in plain text and personal API token labels (token secrets cannot be exported). Store the file securely.",
+        security: [{ supabaseSessionAuth: [] }],
+        responses: {
+          "200": {
+            description: "Account export",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["version", "exported_at", "provider_keys", "api_tokens"],
+                  properties: {
+                    version: { type: "integer", const: 1 },
+                    exported_at: { type: "string", format: "date-time" },
+                    provider_keys: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          service: { type: "string", enum: [...keyedProviders] },
+                          key: { type: "string", description: "Decrypted provider API key." },
+                          created_at: { type: "string", format: "date-time" },
+                        },
+                      },
+                    },
+                    api_tokens: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          label: { type: "string" },
+                          created_at: { type: "string", format: "date-time" },
+                          revoked_at: { type: ["string", "null"], format: "date-time" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "401": { description: "Valid Supabase session required" },
+          "503": { description: "Account data requires Supabase" },
+        },
+      },
+      post: {
+        operationId: "importAccountData",
+        summary: "Import provider keys",
+        description: "Requires a signed-in session. Adds provider keys from an export file to the account; keys already saved are skipped.",
+        security: [{ supabaseSessionAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["provider_keys"],
+                properties: {
+                  provider_keys: {
+                    type: "array",
+                    maxItems: 200,
+                    items: {
+                      type: "object",
+                      required: ["service", "key"],
+                      properties: {
+                        service: { type: "string", enum: [...keyedProviders] },
+                        key: { type: "string", minLength: 1, maxLength: 500 },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Import counts",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    imported: { type: "integer" },
+                    skipped: { type: "integer", description: "Already saved for this account." },
+                    invalid: { type: "integer", description: "Unknown service, empty key, or key over 500 characters." },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Invalid JSON, missing provider_keys array, or more than 200 keys" },
+          "401": { description: "Valid Supabase session required" },
+          "503": { description: "Account data requires Supabase" },
+        },
+      },
+    },
+  },
+  components: {
+    securitySchemes: {
+      bearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        description: "PROVIDER_MANAGEMENT_TOKEN or an authorized configured provider API key.",
+      },
+      supabaseSessionAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description:
+          "Supabase access token from the signed-in user's session. Required for account management endpoints.",
+      },
+      personalApiTokenAuth: {
+        type: "http",
+        scheme: "bearer",
+        description:
+          "Personal API token created from a signed-in account, or temporary token created at /api/public/access-token. Temporary tokens contain no provider secrets, expire after 24 hours, and work only while the server process retains them. Usage reports are scoped to the token.",
+      },
+    },
+  },
+};

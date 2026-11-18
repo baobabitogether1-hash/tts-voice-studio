@@ -1,0 +1,86 @@
+[
+ {
+  "capability": "application code (pages, components, lib, API routes)",
+  "source": "github.com/bao002/tts3 main",
+  "outcome": "migrate",
+  "status": "verified",
+  "next_action": "pages load; 74 original tests pass"
+ },
+ {
+  "capability": "database schema (provider keys, usage events, user tokens, key events, RPC functions)",
+  "source": "supabase/migrations",
+  "outcome": "migrate",
+  "status": "verified",
+  "next_action": "applied in Lovable Cloud"
+ },
+ {
+  "capability": "existing records",
+  "source": "source Lovable Cloud database",
+  "outcome": "migrate",
+  "status": "pending",
+  "next_action": "user exports tables from the original app, or skips"
+ },
+ {
+  "capability": "auth identities",
+  "source": "source Lovable Cloud auth users",
+  "outcome": "migrate",
+  "status": "pending",
+  "next_action": "user exports user list (id, email), or skips"
+ },
+ {
+  "capability": "authorization (service-role-only tables, per-user key ownership)",
+  "source": "migration + server code",
+  "outcome": "migrate",
+  "status": "partial",
+  "next_action": "tables locked to server only; signed-in pages not tested yet (no test account)"
+ },
+ {
+  "capability": "Lovable AI gateway TTS",
+  "source": "LOVABLE_API_KEY",
+  "outcome": "preserve",
+  "status": "verified",
+  "next_action": "LOVABLE_API_KEY configured"
+ },
+ {
+  "capability": "external TTS providers (OpenRouter, Gemini, OpenAI, ElevenLabs, Deepgram)",
+  "source": "user-supplied keys + optional *_API_KEY(S) env",
+  "outcome": "preserve",
+  "status": "pending",
+  "next_action": "users add their keys on Account page; not tested with real keys"
+ },
+ {
+  "capability": "key encryption secret",
+  "source": "OPENROUTER_KEY_ENCRYPTION_SECRET",
+  "outcome": "migrate",
+  "status": "done",
+  "next_action": "new secret generated; old saved keys would need re-entry"
+ },
+ {
+  "capability": "provider management token",
+  "source": "PROVIDER_MANAGEMENT_TOKEN",
+  "outcome": "migrate",
+  "status": "done",
+  "next_action": "new token generated"
+ },
+ {
+  "capability": "public HTTP API (/api/public/*)",
+  "source": "src/routes/api/public",
+  "outcome": "preserve",
+  "status": "verified",
+  "next_action": "/api/public/info, openapi.json, tts with Google returned audio"
+ },
+ {
+  "capability": "Vercel deploy workflow",
+  "source": ".github/workflows",
+  "outcome": "cutover",
+  "status": "accepted",
+  "next_action": "dropped; Lovable hosts the app"
+ },
+ {
+  "capability": "verification",
+  "source": "-",
+  "outcome": "migrate",
+  "status": "partial",
+  "next_action": "signed-out flows verified; signed-in flows pending a test account"
+ }
+]
